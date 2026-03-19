@@ -28,20 +28,49 @@ jobs:
         with:
           script: |
             let pr;
-            if (context.eventName === 'pull_request') {
-              pr = context.payload.pull_request;
-            } else {
+            let triggerType = 'pr'; // 'pr' or 'comment'
+            
+            if (context.eventName === 'issue_comment') {
+              // Direct issue_comment event (not via workflow_call)
+              triggerType = 'comment';
               const { data } = await github.rest.pulls.get({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 pull_number: context.issue.number
               });
               pr = data;
+            } else if (context.eventName === 'workflow_call') {
+              // Called as reusable workflow from docs.yml
+              // Check if the original trigger was an issue_comment (/check-cla)
+              if (context.payload.pull_request) {
+                pr = context.payload.pull_request;
+              } else if (context.payload.comment && context.payload.issue) {
+                // workflow_call triggered by issue_comment in caller
+                triggerType = 'comment';
+                const { data } = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: context.payload.issue.number
+                });
+                pr = data;
+              } else {
+                core.setOutput('author', 'unknown');
+                core.setOutput('head_sha', context.sha);
+                core.setOutput('commits_url', '');
+                core.setOutput('pr_number', '0');
+                core.setOutput('trigger_type', 'pr');
+                return;
+              }
+            } else {
+              // pull_request or pull_request_target event
+              pr = context.payload.pull_request;
             }
             
             core.setOutput('author', pr.user.login);
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('commits_url', pr.commits_url);
+            core.setOutput('pr_number', pr.number.toString());
+            core.setOutput('trigger_type', triggerType);
 
       - name: Check CLA for All Commits
         id: cla
@@ -187,8 +216,11 @@ jobs:
             
             console.log(`✅ Set CLA status: ${state} - ${description}`);
             
-            // 如果需要签署 CLA 且不是评论触发，添加评论
-            if (!signed && !error && (context.eventName === 'pull_request' || context.eventName === 'pull_request_target')) {
+            const prNumber = parseInt('${{ steps.pr-info.outputs.pr_number }}') || context.issue?.number;
+            const triggerType = '${{ steps.pr-info.outputs.trigger_type }}';
+            
+            // Post comment when CLA not signed and triggered by PR event (not /check-cla comment)
+            if (!signed && !error && prNumber && triggerType === 'pr') {
               const emailList = emails.split(',').map(e => e.trim()).filter(e => e);
               const unsignedList = unsigned ? unsigned.split(',').map(e => e.trim()).filter(e => e) : [];
               
@@ -208,15 +240,15 @@ jobs:
               💡 **Tip**: All contributors must sign the CLA before the PR can be merged.`;
               
               await github.rest.issues.createComment({
-                issue_number: context.issue.number,
+                issue_number: prNumber,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 body: body
               });
             }
             
-            // 如果是评论触发且成功，添加成功评论
-            if (signed && context.eventName === 'issue_comment') {
+            // Post success comment when triggered by /check-cla comment
+            if (signed && triggerType === 'comment' && prNumber) {
               const emailList = emails.split(',').map(e => e.trim()).filter(e => e);
               
               const body = `## ✅ CLA Verification Complete
@@ -230,15 +262,15 @@ jobs:
               Your pull request can now proceed with the review process! 🎉`;
               
               await github.rest.issues.createComment({
-                issue_number: context.issue.number,
+                issue_number: prNumber || context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 body: body
               });
             }
             
-            // 如果是评论触发但 CLA 仍未签署，添加提醒评论
-            if (!signed && !error && context.eventName === 'issue_comment') {
+            // Post reminder comment when triggered by /check-cla but CLA still not signed
+            if (!signed && !error && triggerType === 'comment' && prNumber) {
               const emailList = emails.split(',').map(e => e.trim()).filter(e => e);
               const unsignedList = unsigned ? unsigned.split(',').map(e => e.trim()).filter(e => e) : [];
               
@@ -258,7 +290,7 @@ jobs:
               💡 **Tip**: All contributors must sign the CLA before the PR can be merged.`;
               
               await github.rest.issues.createComment({
-                issue_number: context.issue.number,
+                issue_number: prNumber || context.issue.number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 body: body
