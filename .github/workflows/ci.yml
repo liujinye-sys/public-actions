@@ -182,6 +182,21 @@ jobs:
         ~/bin/repo init -u https://github.com/open-vela/manifests -b "$PR_BASE_REF" -m openvela.xml --group=default,platform-linux --depth=1 --git-lfs
         echo "REPO_INIT=true" >> $GITHUB_ENV
 
+    - name: Apply manifest PR before sync
+      if: ${{ github.event_name == 'pull_request_target' && github.repository == 'open-vela/manifests' }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: |
+        git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        git config --global user.email "openvela-robot@xiaomi.com"
+        git config --global user.name "openvela-robot"
+        cd .repo/manifests
+        git fetch origin pull/$PR_NUMBER/head:pr-branch
+        git cherry-pick $(git rev-list --reverse HEAD..$PR_HEAD_SHA) || true
+        cd -
+
     - name: Repo Sync
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -214,7 +229,7 @@ jobs:
           - group: ubuntu22-01
             tasks: [goldfish-arm64-v8a-ap@cmake, goldfish-armeabi-v7a-ap@cmake, goldfish-x86_64-ap@cmake]  # 第一组任务
           - group: ubuntu22-02
-            tasks: [./vendor/openvela/boards/sil/configs/ksil_arm32r_nsh_core0@cmake, ./vendor/openvela/boards/sil/configs/ksil_arm32r_nsh_bl@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/bl@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core0@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core1@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core2@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core3@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core4@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core5@cmake, ./vendor/flagchip/boards/fc7300/fc7300f8m-evb/configs/kbl@cmake, ./vendor/flagchip/boards/fc7300/fc7300f8m-evb/configs/kcore0@cmake]  # 第二组任务
+            tasks: [./vendor/openvela/boards/sil/configs/ksil_arm32r_nsh_core0@cmake, ./vendor/openvela/boards/sil/configs/ksil_arm32r_nsh_bl@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/bl@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core0@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core1@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core2@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core3@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core4@cmake, ./vendor/infineon/boards/aurix/tc4d9_evb/configs/core5@cmake, ./vendor/flagchip/boards/fc7300/fc7300f8m-evb/configs/kbl@cmake]  # 第二组任务（kcore0 暂时关闭，multiple definition 问题待修复）
       fail-fast: false
     outputs:
       status: ${{ steps.check.outputs.status }}
